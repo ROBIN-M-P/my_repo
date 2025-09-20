@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Utility function: get current user's role
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // === USERS COLLECTION ===
+    match /users/{userId} {
+      allow read: if request.auth != null &&
+        (
+          // A user can read their own profile
+          request.auth.uid == userId ||
+
+          // An admin can read any profile
+          getUserRole() == 'admin' ||
+
+          // A doctor can read only their assigned patients
+          (getUserRole() == 'doctor' &&
+           resource.data.role == 'patient' &&
+           resource.data.assignedDoctorId == request.auth.uid)
+        );
+
+      allow write: if request.auth != null &&
+        (
+          // A user can update their own profile
+          request.auth.uid == userId ||
+
+          // Admins can update any profile
+          getUserRole() == 'admin'
+        );
+    }
+
+    // === SCANS COLLECTION ===
+    match /scans/{scanId} {
+      allow read: if request.auth != null &&
+        (
+          getUserRole() == 'admin' ||
+          // Patient can read their own scans
+          resource.data.patientId == request.auth.uid ||
+          // Assigned doctor can read scans of their patients
+          (getUserRole() == 'doctor' &&
+           get(/databases/$(database)/documents/users/$(resource.data.patientId)).data.assignedDoctorId == request.auth.uid)
+        );
+
+      allow write: if request.auth != null &&
+        (
+          // Patients can upload their own scans
+          resource.data.patientId == request.auth.uid ||
+          // Admins can write any scan
+          getUserRole() == 'admin'
+        );
+    }
+
+    // === DEFAULT: LOCK EVERYTHING ELSE ===
+    match /{document=**} {
+      allow read, write: if request.auth != null && getUserRole() == 'admin';
+    }
+  }
+}
